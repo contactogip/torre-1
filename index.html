@@ -377,7 +377,7 @@ footer.foot strong{color:var(--ink)}
   .stats,.fig,.ph,.qa,tr,.tape,.sema li,.kv div,.stack,.stack-legend,.tl,.tl-list,.chart,.legend,.hbars{break-inside:avoid}
   .gallery{grid-template-columns:repeat(3,minmax(0,1fr));gap:.75rem}
   summary::before{display:none}
-  footer.foot{padding:1.5rem 0 0}
+  footer.foot{padding:1.5rem 0 0;break-inside:avoid}
 }
 </style>
 </head>
@@ -529,7 +529,6 @@ const INFORMES = [
   semaforo:[
     { ambito:"Avance físico vs programa", estado:"verde", lectura:"Ejecutado 40,7% vs programado 39,9% (+0,77 pp)", ir:"avance" },
     { ambito:"Avance financiero vs físico", estado:"rojo", lectura:"Gasto rendido 48,9% vs avance físico 40,7% (+8,19 pp)", ir:"financiero" },
-    { ambito:"Consumo de plazo", estado:"rojo", lectura:"Plazo transcurrido 50,0% con avance físico 40,7% (0,81x)", ir:"avance" },
     { ambito:"Cierre de RDI", estado:"amarillo", lectura:"Tasa de cierre 76,9%, con 15 pendientes y 14 vencidas", ir:"rdi" },
     { ambito:"Seguridad (accidentabilidad vs industria)", estado:"rojo", lectura:"Accidentabilidad 7,47% vs 2,72% de la industria (2,7 veces)", ir:"seguridad" },
     { ambito:"Conciliación de recursos obra vs EEPP", estado:"amarillo", lectura:"Máxima diferencia de 6,8% entre inventario en obra y lo pagado en EEPP", ir:"recursos" }
@@ -668,6 +667,37 @@ function vContrato(R){
     <p class="src">La vigencia incluye el período de mantenimiento.</p>`);
 }
 
+/* Avance necesario por mes para terminar en plazo, y avance del último mes */
+function ritmoTermino(R){
+  const ej = R.avance.ejecutado, rest = R.plazo.restantes;
+  const req = rest > 0 ? (1 - ej) * 100 * 30 / rest : null;
+  const prev = INFORMES.filter(x => x.numero < R.numero).sort((a,b) => b.numero - a.numero)[0];
+  let ult = null, sub = "";
+  if (prev){ ult = (ej - prev.avance.ejecutado) * 100; sub = `Del ${prev.cierre} al ${R.cierre}`; }
+  else if (R.semanal && R.semanal.real && R.semanal.real.length >= 4){ ult = R.semanal.real.slice(-4).reduce((a,b)=>a+b,0) * 30 / 28; sub = "Últimas 4 semanas, llevado a 30 días"; }
+  return { req, ult, sub };
+}
+function ledeRitmo(R){
+  const T = ritmoTermino(R); if (T.req == null) return "";
+  return ` Para terminar en plazo debe avanzar ${n(T.req,1)}% por mes${T.ult != null ? `; en el último mes avanzó ${n(T.ult,1)}%` : ""}.`;
+}
+function bloqueRitmo(R){
+  const T = ritmoTermino(R); if (T.req == null) return "";
+  const fin = R.proyecto.termino;
+  const nota = T.ult == null
+    ? `Es el avance promedio que la obra debe lograr cada mes, desde el cierre hasta el ${fin}, para llegar al 100% en la fecha de término.`
+    : T.ult >= T.req
+      ? `El avance del último mes alcanza el ritmo necesario para terminar en la fecha de término (${fin}).`
+      : `Para terminar el ${fin}, la obra debe avanzar en promedio ${n(T.req,1)}% por mes, más que el ${n(T.ult,1)}% logrado en el último mes.`;
+  return `
+    <h3>Ritmo para terminar en plazo</h3>
+    <dl class="stats">
+      ${stat("Avance necesario por mes", n(T.req,1)+"%", `Promedio hasta el ${fin}`)}
+      ${T.ult != null ? stat("Avance del último mes", n(T.ult,1)+"%", T.sub) : ""}
+    </dl>
+    <p class="note" style="margin-top:-.75rem">${nota}</p>`;
+}
+
 function vAvance(R){
   const A = R.avance, H = R.hitosPrograma;
   const ini = toDate(R.proyecto.inicio), fin = toDate(R.proyecto.termino), hoy = toDate(R.cierre);
@@ -680,13 +710,13 @@ function vAvance(R){
   const prodRows = R.produccion.map(r=>`<tr><td>${r[0]}</td><td>${r[1]}</td><td class="r">${n(r[2])}</td><td class="r">${n(r[3])}</td><td class="r">${n(r[4])}</td><td class="r">${n(r[5])}</td>
     <td class="r"><span class="${r[6]<0?"neg":"pos"}">${sgn(r[6],1)}</span></td><td class="r"><span class="${r[7]<0?"neg":"pos"}">${sgn(r[7],0)}</span></td><td class="r">${r[8]}</td></tr>`).join("");
   return sec("avance", head(R,"avance","Avance físico",
-    `Ejecutado ${n(A.ejecutado*100,2)}% contra ${n(A.programado*100,2)}% programado al ${R.cierre}: ${n(A.diasHabiles,1)} días hábiles de adelanto. El ritmo físico respecto del plazo consumido es ${n(A.ritmo,2)}x.`) + `
+    `Ejecutado ${n(A.ejecutado*100,2)}% contra ${n(A.programado*100,2)}% programado al ${R.cierre}: ${n(A.diasHabiles,1)} días hábiles de adelanto.${ledeRitmo(R)}`) + `
     <dl class="stats">
       ${stat("Programado a la fecha", n(A.programado*100,2)+"%", "Línea base")}
       ${stat("Ejecutado a la fecha", n(A.ejecutado*100,2)+"%", "Avance real en terreno")}
       ${stat("Desviación", sgn(A.desviacion,2)+" pp", `${n(A.diasHabiles,1)} días hábiles de adelanto`, "pos")}
-      ${stat("Ritmo físico / plazo", n(A.ritmo,2)+"x", "Sobre 1,00x el avance supera al consumo de plazo", "neg")}
-    </dl>
+      ${stat("Plazo transcurrido", pct(R.plazo.transcurrido), `Día ${n(R.plazo.dia)} de ${n(R.proyecto.plazoDias)}`)}
+    </dl>${bloqueRitmo(R)}
     <h3>Seguimiento semanal de avance</h3>
     <div class="legend">
       <span><i class="line" style="--c:var(--slate)"></i>Línea base acumulada</span>
@@ -767,7 +797,6 @@ function vFinanciero(R){
         <tr><td>Brecha avance financiero vs físico</td><td class="r"><span class="neg">${sgn(A.brecha,2)} pp</span></td><td>Mayor gasto rendido que avance físico certificado</td></tr>
         <tr><td>Pagado del contrato (EEPP y anticipos)</td><td class="r">${pct(A.pagado)}</td><td></td></tr>
         <tr><td>Plazo transcurrido</td><td class="r">${pct(R.plazo.transcurrido)}</td><td>Día ${n(R.plazo.dia)} de ${n(R.proyecto.plazoDias)}</td></tr>
-        <tr><td>Ritmo de avance respecto del plazo</td><td class="r"><span class="neg">${n(A.ritmo,2)}x</span></td><td>Sobre 1,00x el avance físico es más rápido que el consumo de plazo</td></tr>
       </tbody>
     </table></div>`);
 }
