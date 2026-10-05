@@ -377,8 +377,11 @@ footer.foot strong{color:var(--ink)}
   .stats,.fig,.ph,.qa,tr,.tape,.sema li,.kv div,.stack,.stack-legend,.tl,.tl-list,.chart,.legend,.hbars{break-inside:avoid}
   .gallery{grid-template-columns:repeat(3,minmax(0,1fr));gap:.75rem}
   summary::before{display:none}
-  footer.foot{padding:1.5rem 0 0;break-inside:avoid}
+  footer.foot{padding:1.5rem 0 0}
 }
+
+/* Avance mensual: dos cifras lado a lado */
+.stats.mes{grid-template-columns:repeat(2,minmax(0,1fr))}
 </style>
 </head>
 <body>
@@ -436,7 +439,7 @@ const INFORMES = [
   contrato:{ total:1032334.4248, neto:867507.92, cd:695920.31, ggu:171587.61, anticipos:72132.648375517805,
     pagado:440899.77297551784, saldo:591434.65182448225, rendiciones:472358,
     totalCLP:39249612462, netoCLP:32982867615, pagadoCLP:16119985930, saldoCLP:16862881685, rendicionesCLP:19182783257 },
-  avance:{ programado:0.3991, ejecutado:0.4068, desviacion:0.77, diasHabiles:5.5, financiero:0.489, brecha:8.19, pagado:0.4271, ritmo:0.81,
+  avance:{ programado:0.3991, ejecutado:0.4068, desviacion:0.77, diasHabiles:5.5, financiero:0.489, brecha:8.19, pagado:0.4271,
     resumen:"Este desfase de +0,77% respecto de la línea base representa un total aproximado de 5,5 días hábiles de adelanto acumulado." },
   semanal:{
     fechas:["29-06","06-07","13-07","20-07","27-07","03-08","10-08","17-08","24-08","31-08","07-09","14-09","21-09","28-09","05-10","12-10","19-10"],
@@ -565,6 +568,25 @@ const ESTADO = { verde:"Verde", amarillo:"Amarillo", rojo:"Rojo" };
 const MES = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
 const etiqueta = x => { const [y,m] = x.id.split("-"); return `<strong>N° ${x.numero}</strong> · ${MES[+m-1]} ${y}`; };
 
+/* Avance mensual: lo que falta por ejecutar repartido
+   en los meses que quedan hasta el término, y lo avanzado desde el informe anterior de esta página.
+   En el primer informe publicado de una obra no hay mes anterior y se muestra solo la primera cifra. */
+const diasDelMes = (y,m) => new Date(y, m, 0).getDate();
+const mesesEntre = (a,b) => { const [da,ma,ya] = a.split("-").map(Number), [db,mb,yb] = b.split("-").map(Number); return (yb-ya)*12 + (mb-ma) + (db-da)/diasDelMes(yb,mb); };
+function avanceMensual(R, prev){
+  const meses = mesesEntre(R.cierre, R.proyecto.termino), falta = (1 - R.avance.ejecutado) * 100;
+  return { meses, falta, necesario: falta / meses, prev, ultimoMes: prev ? (R.avance.ejecutado - prev.avance.ejecutado) * 100 : null };
+}
+const textoMensual = R => { const M = R.mes; return `Para terminar en plazo se necesitan ${n(M.necesario,1)} puntos de avance por mes${M.ultimoMes!=null?`; en el último mes se avanzaron ${n(M.ultimoMes,1)}`:""}.`; };
+function bloqueMensual(R){
+  const M = R.mes, lento = M.ultimoMes!=null && M.ultimoMes < M.necesario;
+  return `<h3>Avance mensual</h3>
+    <dl class="stats mes">
+      ${stat("Avance necesario para terminar en plazo", n(M.necesario,1)+" puntos", `Por mes hasta el término (${R.proyecto.termino}); faltan ${n(M.falta,2)}%`)}
+      ${M.ultimoMes!=null?stat("Avance del último mes", n(M.ultimoMes,1)+" puntos", `De ${n(M.prev.avance.ejecutado*100,2)}% a ${n(R.avance.ejecutado*100,2)}% en ${R.periodo.toLowerCase()}`, lento?"neg":"pos"):""}
+    </dl>`;
+}
+
 const SECCIONES = [
   ["resumen","Resumen"],["contrato","Contrato"],["avance","Avance físico"],["financiero","Estado financiero"],
   ["eepp","Estados de pago"],["costos","Costos rendidos"],["rdi","RDI"],["calidad","Calidad"],["seguridad","Seguridad"],
@@ -667,37 +689,6 @@ function vContrato(R){
     <p class="src">La vigencia incluye el período de mantenimiento.</p>`);
 }
 
-/* Avance necesario por mes para terminar en plazo, y avance del último mes */
-function ritmoTermino(R){
-  const ej = R.avance.ejecutado, rest = R.plazo.restantes;
-  const req = rest > 0 ? (1 - ej) * 100 * 30 / rest : null;
-  const prev = INFORMES.filter(x => x.numero < R.numero).sort((a,b) => b.numero - a.numero)[0];
-  let ult = null, sub = "";
-  if (prev){ ult = (ej - prev.avance.ejecutado) * 100; sub = `Del ${prev.cierre} al ${R.cierre}`; }
-  else if (R.semanal && R.semanal.real && R.semanal.real.length >= 4){ ult = R.semanal.real.slice(-4).reduce((a,b)=>a+b,0) * 30 / 28; sub = "Últimas 4 semanas, llevado a 30 días"; }
-  return { req, ult, sub };
-}
-function ledeRitmo(R){
-  const T = ritmoTermino(R); if (T.req == null) return "";
-  return ` Para terminar en plazo debe avanzar ${n(T.req,1)}% por mes${T.ult != null ? `; en el último mes avanzó ${n(T.ult,1)}%` : ""}.`;
-}
-function bloqueRitmo(R){
-  const T = ritmoTermino(R); if (T.req == null) return "";
-  const fin = R.proyecto.termino;
-  const nota = T.ult == null
-    ? `Es el avance promedio que la obra debe lograr cada mes, desde el cierre hasta el ${fin}, para llegar al 100% en la fecha de término.`
-    : T.ult >= T.req
-      ? `El avance del último mes alcanza el ritmo necesario para terminar en la fecha de término (${fin}).`
-      : `Para terminar el ${fin}, la obra debe avanzar en promedio ${n(T.req,1)}% por mes, más que el ${n(T.ult,1)}% logrado en el último mes.`;
-  return `
-    <h3>Ritmo para terminar en plazo</h3>
-    <dl class="stats">
-      ${stat("Avance necesario por mes", n(T.req,1)+"%", `Promedio hasta el ${fin}`)}
-      ${T.ult != null ? stat("Avance del último mes", n(T.ult,1)+"%", T.sub) : ""}
-    </dl>
-    <p class="note" style="margin-top:-.75rem">${nota}</p>`;
-}
-
 function vAvance(R){
   const A = R.avance, H = R.hitosPrograma;
   const ini = toDate(R.proyecto.inicio), fin = toDate(R.proyecto.termino), hoy = toDate(R.cierre);
@@ -710,13 +701,13 @@ function vAvance(R){
   const prodRows = R.produccion.map(r=>`<tr><td>${r[0]}</td><td>${r[1]}</td><td class="r">${n(r[2])}</td><td class="r">${n(r[3])}</td><td class="r">${n(r[4])}</td><td class="r">${n(r[5])}</td>
     <td class="r"><span class="${r[6]<0?"neg":"pos"}">${sgn(r[6],1)}</span></td><td class="r"><span class="${r[7]<0?"neg":"pos"}">${sgn(r[7],0)}</span></td><td class="r">${r[8]}</td></tr>`).join("");
   return sec("avance", head(R,"avance","Avance físico",
-    `Ejecutado ${n(A.ejecutado*100,2)}% contra ${n(A.programado*100,2)}% programado al ${R.cierre}: ${n(A.diasHabiles,1)} días hábiles de adelanto.${ledeRitmo(R)}`) + `
+    `Ejecutado ${n(A.ejecutado*100,2)}% contra ${n(A.programado*100,2)}% programado al ${R.cierre}: ${n(A.diasHabiles,1)} días hábiles de adelanto. ${textoMensual(R)}`) + `
     <dl class="stats">
       ${stat("Programado a la fecha", n(A.programado*100,2)+"%", "Línea base")}
       ${stat("Ejecutado a la fecha", n(A.ejecutado*100,2)+"%", "Avance real en terreno")}
       ${stat("Desviación", sgn(A.desviacion,2)+" pp", `${n(A.diasHabiles,1)} días hábiles de adelanto`, "pos")}
-      ${stat("Plazo transcurrido", pct(R.plazo.transcurrido), `Día ${n(R.plazo.dia)} de ${n(R.proyecto.plazoDias)}`)}
-    </dl>${bloqueRitmo(R)}
+    </dl>
+    ${bloqueMensual(R)}
     <h3>Seguimiento semanal de avance</h3>
     <div class="legend">
       <span><i class="line" style="--c:var(--slate)"></i>Línea base acumulada</span>
@@ -1078,6 +1069,7 @@ function lbStep(d){ LB.i = (LB.i + d + LB.list.length) % LB.list.length; lbShow(
 /* =====================================================================
    ARRANQUE
    ===================================================================== */
+INFORMES.forEach((x,i)=>{ x.mes = avanceMensual(x, INFORMES[i+1]); });
 let R = INFORMES[0];
 function render(){
   $("#logo").src = R.media.misc.logo.src;
